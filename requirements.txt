@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+pandas
+numpy
+yfinance
+joblib
+xgboost
+lightgbm
+statsmodels
