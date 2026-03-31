@@ -7,3 +7,4 @@ xgboost==2.0.3
 lightgbm==4.3.0
 yfinance==0.2.40
 joblib==1.4.2
+python-3.11.9
