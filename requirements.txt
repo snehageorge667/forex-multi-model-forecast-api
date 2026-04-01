@@ -8,3 +8,4 @@ lightgbm==4.3.0
 yfinance==0.2.40
 joblib==1.4.2
 statsmodels==0.14.1
+requests==2.33.1

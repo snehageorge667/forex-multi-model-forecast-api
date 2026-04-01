@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 import joblib
+import requests
 from datetime import datetime, timedelta, date
 
 from utils.feature_engineering import create_features
@@ -25,32 +26,51 @@ future_model = joblib.load("models/future_forecasting.pkl")
 
 
 # ==============================
-# DOWNLOAD DATA
+# DOWNLOAD DATA 
 # ==============================
+import time
+
 def download_data():
+    try:
+        API_KEY = "GPCSF42YSKR1EO22"
 
-    end_date = datetime.today().strftime('%Y-%m-%d')
-    start_date = (datetime.today() - timedelta(days=60)).strftime('%Y-%m-%d')
+        url = f"https://www.alphavantage.co/query?function=FX_DAILY&from_symbol=USD&to_symbol=INR&outputsize=compact&apikey={API_KEY}"
 
-    raw = yf.download("INR=X", start=start_date, end=end_date, progress=False)
+        response = requests.get(url)
+        data = response.json()
 
-    if isinstance(raw.columns, pd.MultiIndex):
-        raw.columns = raw.columns.get_level_values(0)
+        # HANDLE RATE LIMIT
+        if "Note" in data:
+            time.sleep(60)
+            response = requests.get(url)
+            data = response.json()
 
-    raw.reset_index(inplace=True)
+        if "Time Series FX (Daily)" not in data:
+            raise ValueError("Invalid API response")
 
-    raw.rename(columns={
-        'Date': 'date',
-        'Open': 'open',
-        'High': 'high',
-        'Low': 'low',
-        'Close': 'close'
-    }, inplace=True)
+        time_series = data["Time Series FX (Daily)"]
 
-    raw = raw.sort_values('date')
+        df = pd.DataFrame.from_dict(time_series, orient="index")
 
-    return raw
+        df.rename(columns={
+            "1. open": "open",
+            "2. high": "high",
+            "3. low": "low",
+            "4. close": "close"
+        }, inplace=True)
 
+        df = df.astype(float)
+        df.index = pd.to_datetime(df.index)
+
+        df.reset_index(inplace=True)
+        df.rename(columns={"index": "date"}, inplace=True)
+
+        return df.sort_values("date").tail(60)
+
+    except Exception as e:
+        raise ValueError(f"Alpha Vantage failed: {str(e)}")
+    if "Note" in data:
+        raise ValueError("API rate limit exceeded")
 
 # ==============================
 # HOME
@@ -66,20 +86,27 @@ def home():
 @app.get("/predict/arima")
 def predict_arima():
 
-    raw = download_data()
+    try:
+        raw = download_data()
 
-    raw['log_close'] = np.log(raw['close'])
-    raw['target'] = raw['log_close'].shift(-1) - raw['log_close']
+        raw['log_close'] = np.log(raw['close'])
+        raw['target'] = raw['log_close'].shift(-1) - raw['log_close']
 
-    raw.dropna(inplace=True)
+        raw.dropna(inplace=True)
 
-    last_close = raw['close'].iloc[-1]
+        if raw.empty:
+            return {"error": "Not enough data"}
 
-    forecast = arima_model.forecast(steps=1)
+        last_close = raw['close'].iloc[-1]
 
-    predicted_price = last_close * np.exp(forecast.iloc[0])
+        forecast = arima_model.forecast(steps=1)
 
-    return {"model": "ARIMA", "predicted_close": float(predicted_price)}
+        predicted_price = last_close * np.exp(forecast.iloc[0])
+
+        return {"model": "ARIMA", "predicted_close": float(predicted_price)}
+
+    except Exception as e:
+        return {"error": str(e)}
 
 
 # ==============================
@@ -88,26 +115,33 @@ def predict_arima():
 @app.get("/predict/arimax")
 def predict_arimax():
 
-    raw = download_data()
-    raw = create_features(raw)
+    try:
+        raw = download_data()
+        raw = create_features(raw)
 
-    last_close = raw['close'].iloc[-1]
+        if raw.empty:
+            return {"error": "Not enough data"}
 
-    feature_cols = [
-        'range_pct',
-        'volatility_return_5',
-        'ma_return_5',
-        'ma_return_10',
-        'rsi_14'
-    ]
+        last_close = raw['close'].iloc[-1]
 
-    exog = raw[feature_cols].iloc[-1:]
+        feature_cols = [
+            'range_pct',
+            'volatility_return_5',
+            'ma_return_5',
+            'ma_return_10',
+            'rsi_14'
+        ]
 
-    forecast = arimax_model.forecast(steps=1, exog=exog)
+        exog = raw[feature_cols].iloc[-1:]
 
-    predicted_price = last_close * np.exp(forecast.iloc[0])
+        forecast = arimax_model.forecast(steps=1, exog=exog)
 
-    return {"model": "ARIMAX", "predicted_close": float(predicted_price)}
+        predicted_price = last_close * np.exp(forecast.iloc[0])
+
+        return {"model": "ARIMAX", "predicted_close": float(predicted_price)}
+
+    except Exception as e:
+        return {"error": str(e)}
 
 
 # ==============================
@@ -116,20 +150,27 @@ def predict_arimax():
 @app.get("/predict/sarima")
 def predict_sarima():
 
-    raw = download_data()
+    try:
+        raw = download_data()
 
-    raw['log_close'] = np.log(raw['close'])
-    raw['target'] = raw['log_close'].shift(-1) - raw['log_close']
+        raw['log_close'] = np.log(raw['close'])
+        raw['target'] = raw['log_close'].shift(-1) - raw['log_close']
 
-    raw.dropna(inplace=True)
+        raw.dropna(inplace=True)
 
-    last_close = raw['close'].iloc[-1]
+        if raw.empty:
+            return {"error": "Not enough data"}
 
-    forecast = sarima_model.forecast(steps=1)
+        last_close = raw['close'].iloc[-1]
 
-    predicted_price = last_close * np.exp(forecast.iloc[0])
+        forecast = sarima_model.forecast(steps=1)
 
-    return {"model": "SARIMA", "predicted_close": float(predicted_price)}
+        predicted_price = last_close * np.exp(forecast.iloc[0])
+
+        return {"model": "SARIMA", "predicted_close": float(predicted_price)}
+
+    except Exception as e:
+        return {"error": str(e)}
 
 
 # ==============================
@@ -138,26 +179,33 @@ def predict_sarima():
 @app.get("/predict/sarimax")
 def predict_sarimax():
 
-    raw = download_data()
-    raw = create_features(raw)
+    try:
+        raw = download_data()
+        raw = create_features(raw)
 
-    last_close = raw['close'].iloc[-1]
+        if raw.empty:
+            return {"error": "Not enough data"}
 
-    feature_cols = [
-        'range_pct',
-        'volatility_return_5',
-        'ma_return_5',
-        'ma_return_10',
-        'rsi_14'
-    ]
+        last_close = raw['close'].iloc[-1]
 
-    exog = raw[feature_cols].iloc[-1:]
+        feature_cols = [
+            'range_pct',
+            'volatility_return_5',
+            'ma_return_5',
+            'ma_return_10',
+            'rsi_14'
+        ]
 
-    forecast = sarimax_model.forecast(steps=1, exog=exog)
+        exog = raw[feature_cols].iloc[-1:]
 
-    predicted_price = last_close * np.exp(forecast.iloc[0])
+        forecast = sarimax_model.forecast(steps=1, exog=exog)
 
-    return {"model": "SARIMAX", "predicted_close": float(predicted_price)}
+        predicted_price = last_close * np.exp(forecast.iloc[0])
+
+        return {"model": "SARIMAX", "predicted_close": float(predicted_price)}
+
+    except Exception as e:
+        return {"error": str(e)}
 
 
 # ==============================
@@ -166,23 +214,33 @@ def predict_sarimax():
 @app.get("/predict/xgboost")
 def predict_xgboost():
 
-    raw = download_data()
-    df = create_features(raw)
+    try:
+        raw = download_data()
+        df = create_features(raw)
 
-    feature_cols = xgb_model.get_booster().feature_names
-    df = df.reindex(columns=feature_cols, fill_value=0)
+        if df.empty:
+            return {"error": "Not enough data"}
 
-    latest_data = df.iloc[-1:]
+        feature_cols = xgb_model.get_booster().feature_names
+        df = df.reindex(columns=feature_cols, fill_value=0)
 
-    pred = xgb_model.predict(latest_data)[0]
+        latest_data = df.iloc[-1:]
 
-    last_close = raw['close'].iloc[-1]
-    predicted_price = last_close * np.exp(pred)
+        if latest_data.empty:
+            return {"error": "No features available"}
 
-    return {
-        "model": "XGBoost",
-        "predicted_close": float(predicted_price)
-    }
+        pred = xgb_model.predict(latest_data)[0]
+
+        last_close = raw['close'].iloc[-1]
+        predicted_price = last_close * np.exp(pred)
+
+        return {
+            "model": "XGBoost",
+            "predicted_close": float(predicted_price)
+        }
+
+    except Exception as e:
+        return {"error": str(e)}
 
 
 # ==============================
@@ -191,23 +249,33 @@ def predict_xgboost():
 @app.get("/predict/lightgbm")
 def predict_lightgbm():
 
-    raw = download_data()
-    df = create_features(raw)
+    try:
+        raw = download_data()
+        df = create_features(raw)
 
-    feature_cols = lgb_model.booster_.feature_name()
-    df = df.reindex(columns=feature_cols, fill_value=0)
+        if df.empty:
+            return {"error": "Not enough data"}
 
-    latest_data = df.iloc[-1:]
+        feature_cols = lgb_model.booster_.feature_name()
+        df = df.reindex(columns=feature_cols, fill_value=0)
 
-    pred = lgb_model.predict(latest_data)[0]
+        latest_data = df.iloc[-1:]
 
-    last_close = raw['close'].iloc[-1]
-    predicted_price = last_close * np.exp(pred)
+        if latest_data.empty:
+            return {"error": "No features available"}
 
-    return {
-        "model": "LightGBM",
-        "predicted_close": float(predicted_price)
-    }
+        pred = lgb_model.predict(latest_data)[0]
+
+        last_close = raw['close'].iloc[-1]
+        predicted_price = last_close * np.exp(pred)
+
+        return {
+            "model": "LightGBM",
+            "predicted_close": float(predicted_price)
+        }
+
+    except Exception as e:
+        return {"error": str(e)}
 
 
 # ==============================
@@ -216,23 +284,33 @@ def predict_lightgbm():
 @app.get("/predict/xgboost_macro")
 def predict_xgboost_macro():
 
-    raw = download_data()
-    df = create_features(raw)
+    try:
+        raw = download_data()
+        df = create_features(raw)
 
-    feature_cols = xgb_macro_model.get_booster().feature_names
-    df = df.reindex(columns=feature_cols, fill_value=0)
+        if df.empty:
+            return {"error": "Not enough data"}
 
-    latest_data = df.iloc[-1:]
+        feature_cols = xgb_macro_model.get_booster().feature_names
+        df = df.reindex(columns=feature_cols, fill_value=0)
 
-    pred = xgb_macro_model.predict(latest_data)[0]
+        latest_data = df.iloc[-1:]
 
-    last_close = raw['close'].iloc[-1]
-    predicted_price = last_close * np.exp(pred)
+        if latest_data.empty:
+            return {"error": "No features available"}
 
-    return {
-        "model": "XGBoost Macro",
-        "predicted_close": float(predicted_price)
-    }
+        pred = xgb_macro_model.predict(latest_data)[0]
+
+        last_close = raw['close'].iloc[-1]
+        predicted_price = last_close * np.exp(pred)
+
+        return {
+            "model": "XGBoost Macro",
+            "predicted_close": float(predicted_price)
+        }
+
+    except Exception as e:
+        return {"error": str(e)}
 
 
 # ==============================
@@ -292,12 +370,7 @@ def predict_future(
     date: date = Query(
         ...,
         description="Enter target date in format YYYY-MM-DD",
-        examples={
-            "example1": {
-                "summary": "Valid date format",
-                "value": "2026-04-03"
-            }
-        }
+        examples={"example1": {"value": "2026-04-03"}}
     )
 ):
 
